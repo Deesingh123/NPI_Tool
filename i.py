@@ -21,6 +21,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 import concurrent.futures
 import time
+from googleapiclient.http import MediaIoBaseDownload
 
 # Page config
 st.set_page_config(page_title="Google Slides Team Manager", layout="wide")
@@ -156,7 +157,13 @@ def authenticate(username, password):
     return False
 
 def get_user_role(username):
-    return st.session_state.shared_data['users'].get(username, {}).get('role', 'member')
+    """Get user role with proper refresh from shared data"""
+    # First check if we have the user in shared data
+    if username in st.session_state.shared_data['users']:
+        # Force refresh from shared data
+        refresh_shared_state()
+        return st.session_state.shared_data['users'][username].get('role', 'member')
+    return 'member'
 
 def log_activity(action, user, details):
     """Log user activities"""
@@ -737,6 +744,22 @@ if st.session_state.google_creds is None:
     if creds:
         st.session_state.google_creds = creds
 
+# Helper function to check admin access
+def check_admin_access():
+    """Check if current user has admin access"""
+    if not st.session_state.logged_in:
+        return False
+    
+    # Force refresh to get latest role data
+    refresh_shared_state()
+    
+    username = st.session_state.current_user
+    if username in st.session_state.shared_data['users']:
+        role = st.session_state.shared_data['users'][username].get('role', 'member')
+        return role == 'admin'
+    
+    return False
+
 # Sidebar - Authentication with Registration Option
 with st.sidebar:
     st.title("🔐 Authentication")
@@ -753,6 +776,12 @@ with st.sidebar:
                 if authenticate(login_username, login_password):
                     st.session_state.logged_in = True
                     st.session_state.current_user = login_username
+                    
+                    # Update last login time for the user
+                    if login_username in st.session_state.shared_data['users']:
+                        st.session_state.shared_data['users'][login_username]['last_login'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        save_shared_state()
+                    
                     log_activity("LOGIN", login_username, "User logged in")
                     st.success("Logged in successfully!")
                     st.rerun()
@@ -782,8 +811,22 @@ with st.sidebar:
                     st.rerun()
     
     else:
+        # Show current user info with role
         st.success(f"✅ {st.session_state.current_user}")
-        st.info(f"Role: {get_user_role(st.session_state.current_user)}")
+        
+        # Show role with refresh button
+        col_role, col_refresh = st.columns([2, 1])
+        with col_role:
+            current_role = get_user_role(st.session_state.current_user)
+            if current_role == 'admin':
+                st.success("👑 Admin")
+            else:
+                st.info("👤 Member")
+        
+        with col_refresh:
+            if st.button("🔄", key="refresh_role", help="Refresh role"):
+                refresh_shared_state()
+                st.rerun()
         
         # Google Integration
         st.divider()
@@ -1126,7 +1169,12 @@ else:
                         st.markdown(iframe, unsafe_allow_html=True)
                         
                         # Quick download for this presentation
-                    
+                        st.download_button(
+                            label="📥 Get Presentation Link",
+                            data=current_slide.get('presentation_link', ''),
+                            file_name=f"{current_slide.get('title', 'presentation')}_link.txt",
+                            mime="text/plain"
+                        )
                 else:
                     # Show the most recent by default
                     if sorted_slides:
@@ -1286,10 +1334,37 @@ else:
         
         # Tab 4: Admin Panel
         with tab4:
-            user_role = get_user_role(st.session_state.current_user)
+            # Check admin access using the improved function
+            is_admin = check_admin_access()
             
-            if user_role != 'admin':
+            if not is_admin:
                 st.warning("🔒 Admin access only")
+                st.info(f"Your current role: {get_user_role(st.session_state.current_user)}")
+                
+                # Show instructions on how to get admin access
+                with st.expander("ℹ️ How to get admin access?"):
+                    st.markdown("""
+                    ### Request Admin Access
+                    
+                    1. Contact an existing admin user
+                    2. Ask them to change your role to "Admin" in the Admin Panel
+                    3. Once changed, log out and log back in
+                    4. You should now see the Admin Panel tab
+                    
+                    ### Current Admins:
+                    """)
+                    
+                    # List current admins
+                    admins = []
+                    for username, data in st.session_state.shared_data['users'].items():
+                        if data.get('role') == 'admin':
+                            admins.append(username)
+                    
+                    if admins:
+                        for admin in admins:
+                            st.write(f"- **{admin}**")
+                    else:
+                        st.write("No admins found")
             else:
                 st.header("⚙️ Admin Panel")
                 st.success("👑 Admin Access Granted")
@@ -1312,27 +1387,89 @@ else:
                 
                 # User Management
                 st.subheader("👥 User Management")
-                
-                for username, data in st.session_state.shared_data['users'].items():
-                    col1, col2, col3 = st.columns([3, 2, 2])
+                st.info("👑 Admin users can access the Admin Panel and manage users/presentations")
+
+                refresh_shared_state()  # Force refresh to get latest user data
+
+                # Sort users alphabetically
+                sorted_users = sorted(st.session_state.shared_data['users'].items(), key=lambda x: x[0])
+
+                for username, data in sorted_users:
+                    col1, col2, col3, col4 = st.columns([3, 2, 2, 2])
                     
                     with col1:
-                        st.write(f"**{username}**")
+                        if username == st.session_state.current_user:
+                            st.write(f"**{username}** 👈 (You)")
+                        else:
+                            st.write(f"**{username}**")
                     
                     with col2:
-                        role_badge = "👑 Admin" if data['role'] == 'admin' else "👤 Member"
-                        st.write(role_badge)
+                        role = data.get('role', 'member')
+                        if role == 'admin':
+                            st.success("👑 Admin")
+                        else:
+                            st.info("👤 Member")
                     
                     with col3:
+                        # Show last login/activity if available
+                        if 'last_login' in data:
+                            st.caption(f"Last: {data.get('last_login', '')[:10]}")
+                        else:
+                            st.caption("No activity")
+                    
+                    with col4:
                         if username != st.session_state.current_user:
-                            new_role = 'member' if data['role'] == 'admin' else 'admin'
-                            if st.button(f"Change to {new_role}", key=f"role_{username}"):
+                            current_role = data.get('role', 'member')
+                            new_role = 'member' if current_role == 'admin' else 'admin'
+                            
+                            if st.button(f"Make {new_role}", key=f"role_{username}"):
+                                # Update role in shared data
                                 st.session_state.shared_data['users'][username]['role'] = new_role
                                 save_shared_state()
+                                
+                                # Log the activity
                                 log_activity("ROLE_CHANGE", st.session_state.current_user, 
-                                           f"Changed {username} to {new_role}")
-                                st.success(f"Updated {username} to {new_role}")
+                                           f"Changed {username} from {current_role} to {new_role}")
+                                
+                                # If we're changing our own role (in case admin demotes themselves),
+                                # we need to update the session state
+                                if username == st.session_state.current_user:
+                                    st.session_state.current_user_role = new_role
+                                
+                                st.success(f"✅ {username} is now {new_role}!")
                                 st.rerun()
+                        else:
+                            st.write("👤 Current user")
+                
+                st.divider()
+
+                # Add a section to manually refresh user data
+                st.subheader("🔄 Refresh User Data")
+
+                col_refresh, col_export = st.columns(2)
+                with col_refresh:
+                    if st.button("🔄 Refresh All User Data"):
+                        refresh_shared_state()
+                        st.success("✅ User data refreshed!")
+                        st.rerun()
+
+                with col_export:
+                    # Export users data
+                    users_data = []
+                    for username, data in st.session_state.shared_data['users'].items():
+                        users_data.append({
+                            'username': username,
+                            'role': data.get('role', 'member'),
+                            'has_google_auth': 'google_creds' in data if data else False
+                        })
+                    
+                    users_json = json.dumps(users_data, indent=2)
+                    st.download_button(
+                        label="📥 Export Users List",
+                        data=users_json,
+                        file_name=f"users_export_{datetime.now().strftime('%Y%m%d')}.json",
+                        mime="application/json"
+                    )
                 
                 st.divider()
                 
