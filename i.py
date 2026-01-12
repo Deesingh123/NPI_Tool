@@ -1169,12 +1169,7 @@ else:
                         st.markdown(iframe, unsafe_allow_html=True)
                         
                         # Quick download for this presentation
-                        st.download_button(
-                            label="📥 Get Presentation Link",
-                            data=current_slide.get('presentation_link', ''),
-                            file_name=f"{current_slide.get('title', 'presentation')}_link.txt",
-                            mime="text/plain"
-                        )
+                      
                 else:
                     # Show the most recent by default
                     if sorted_slides:
