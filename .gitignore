@@ -1,0 +1,21 @@
+# Virtual environment
+env/
+venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Streamlit
+.streamlit/
+
+# Secrets
+client_secret.json
+token.pickle
+
+# Databases
+*.db
+
+# OS
+.DS_Store
+Thumbs.db
