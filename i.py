@@ -789,26 +789,32 @@ with st.sidebar:
                     st.error("Invalid credentials")
         
         with tab2:
-            reg_username = st.text_input("Username", key="reg_user")
-            reg_password = st.text_input("Password", type="password", key="reg_pass")
-            reg_password_confirm = st.text_input("Confirm Password", type="password", key="reg_pass_confirm")
-            
-            if st.button("Register", key="reg_btn"):
-                if reg_username in st.session_state.shared_data['users']:
-                    st.error("Username already exists")
-                elif reg_password != reg_password_confirm:
-                    st.error("Passwords don't match")
-                elif len(reg_password) < 6:
-                    st.error("Password must be at least 6 characters")
-                else:
-                    st.session_state.shared_data['users'][reg_username] = {
+            with st.form("register_form"):
+                st.subheader("Register New Account")
+        
+                reg_username = st.text_input("Username")
+                reg_password = st.text_input("Password", type="password")
+                reg_password_confirm = st.text_input("Confirm Password", type="password")
+        
+                submitted = st.form_submit_button("Register")
+        
+                if submitted:
+                    if reg_username in st.session_state.shared_data['users']:
+                        st.error("Username already exists")
+                    elif reg_password != reg_password_confirm:
+                        st.error("Passwords don't match")
+                    elif len(reg_password) < 6:
+                        st.error("Password must be at least 6 characters")
+                    else:
+                        st.session_state.shared_data['users'][reg_username] = {
                         'password': hash_password(reg_password),
                         'role': 'member'
                     }
                     save_shared_state()
                     log_activity("REGISTER", reg_username, "New user registered")
-                    st.success("Registration successful! Please login.")
-                    st.rerun()
+                
+                    st.success("✅ Registration successful!")
+                    st.info("Please switch to the 'Login' tab to sign in")
     
     else:
         # Show current user info with role
